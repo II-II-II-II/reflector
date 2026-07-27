@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}{{ instrument['name'] }}{% endblock %}
+{% block content %}
+  <h1>{{ instrument['name'] }} — {{ instrument['full_name'] }}</h1>
+  <p>{{ instrument['instructions'] }}</p>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  <form method="post">
+    {% for item in instrument['items'] %}
+      {% set item_idx = loop.index0 %}
+      <div class="item">
+        <p>{{ loop.index }}. {{ item }}</p>
+        <div class="scale">
+          {% for value, label in instrument['scale'] %}
+            <label>
+              <input type="radio" name="item_{{ item_idx }}" value="{{ value }}">
+              {{ label }}
+            </label>
+          {% endfor %}
+        </div>
+      </div>
+    {% endfor %}
+    <button type="submit">Submit</button>
+  </form>
+{% endblock %}

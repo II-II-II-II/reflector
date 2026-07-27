@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Chat{% endblock %}
+{% block content %}
+  <h1>Chat</h1>
+  <p style="color:#666;font-size:0.9rem;">Not grounded in your journal history or assessments yet — that comes once the extraction/synthesis pipeline is built. This is the plumbing: conversation, persona, and a swappable model backend.</p>
+
+  {% if messages and messages[-1]['role'] == 'user' and messages[-1]['crisis_flag'] %}
+    <div class="crisis" style="margin-bottom:1.5rem;">
+      <p><strong>If you are in immediate danger, call 911 or go to your nearest emergency room.</strong></p>
+      <p><strong>988 Suicide &amp; Crisis Lifeline</strong> — call or text <strong>988</strong>, 24/7.<br>
+         <strong>Crisis Text Line</strong> — text <strong>HOME</strong> to <strong>741741</strong>, 24/7.</p>
+      <p style="font-size:0.85rem;">Shown automatically based on a keyword match in your last message — not a judgment on what you're going through, just a standing offer of real resources.</p>
+    </div>
+  {% endif %}
+
+  <div style="display:flex;flex-direction:column;gap:0.75rem;margin-bottom:1.5rem;">
+    {% for m in messages %}
+      <div style="align-self:{{ 'flex-end' if m['role'] == 'user' else 'flex-start' }};max-width:80%;padding:0.6rem 0.9rem;border-radius:10px;background:{{ '#2c5cc5' if m['role'] == 'user' else '#f0f0f0' }};color:{{ 'white' if m['role'] == 'user' else '#222' }};white-space:pre-wrap;">{{ m['content'] }}</div>
+    {% endfor %}
+  </div>
+
+  <form method="post">
+    <textarea name="message" rows="3" style="width:100%;padding:0.6rem;border-radius:6px;border:1px solid #ccc;font-size:1rem;box-sizing:border-box;" required></textarea>
+    <div style="margin-top:0.6rem;">
+      <button type="submit">Send</button>
+    </div>
+  </form>
+{% endblock %}

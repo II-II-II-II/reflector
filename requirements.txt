@@ -1,0 +1,8 @@
+ollama
+sqlite-vec
+beautifulsoup4
+flask
+pyyaml
+# Optional, only needed if config.yaml selects that provider:
+# boto3        (bedrock)
+# anthropic    (anthropic)

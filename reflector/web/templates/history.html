@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}History — {{ instrument['name'] }}{% endblock %}
+{% block content %}
+  <h1>{{ instrument['name'] }} — history</h1>
+  {% if rows %}
+    <table>
+      <tr><th>Date</th><th>Score</th><th>Severity</th></tr>
+      {% for row in rows %}
+        <tr><td>{{ row['administered_at'] }}</td><td>{{ row['total_score'] }}</td><td>{{ row['severity'] }}</td></tr>
+      {% endfor %}
+    </table>
+  {% else %}
+    <p>No submissions yet.</p>
+  {% endif %}
+  <a class="back" href="{{ url_for('index') }}">Back to assessments</a>
+{% endblock %}

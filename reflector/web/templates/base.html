@@ -1,0 +1,27 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>{% block title %}Reflector{% endblock %}</title>
+  <style>
+    body { font-family: -apple-system, system-ui, sans-serif; max-width: 700px; margin: 3rem auto; padding: 0 1.5rem; color: #222; line-height: 1.5; }
+    h1 { font-size: 1.4rem; }
+    .instrument-list a { display: block; padding: 0.75rem 1rem; margin-bottom: 0.5rem; border: 1px solid #ddd; border-radius: 8px; text-decoration: none; color: #222; }
+    .instrument-list a:hover { background: #f7f7f7; }
+    .item { margin-bottom: 1.5rem; padding-bottom: 1rem; border-bottom: 1px solid #eee; }
+    .item p { margin: 0 0 0.5rem 0; }
+    .scale label { display: inline-block; margin-right: 1.2rem; font-size: 0.95rem; }
+    button { background: #2c5cc5; color: white; border: none; padding: 0.7rem 1.4rem; border-radius: 6px; font-size: 1rem; cursor: pointer; }
+    button:hover { background: #244a9e; }
+    .error { color: #b3261e; }
+    .severity { font-size: 1.3rem; font-weight: 600; }
+    table { border-collapse: collapse; width: 100%; }
+    td, th { padding: 0.4rem 0.6rem; border-bottom: 1px solid #eee; text-align: left; }
+    .crisis { background: #fdecea; border: 1px solid #f5c2c0; padding: 1.2rem; border-radius: 8px; }
+    a.back { display: inline-block; margin-top: 1.5rem; }
+  </style>
+</head>
+<body>
+  {% block content %}{% endblock %}
+</body>
+</html>

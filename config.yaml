@@ -1,0 +1,27 @@
+# Reflector — model backend configuration.
+#
+# No secrets belong in this file. Bedrock uses the standard AWS credential
+# chain (env vars / ~/.aws/credentials / SSO) — nothing to set here beyond
+# region and model ID. Anthropic direct reads its key from the environment
+# variable named below, never from this file.
+
+llm:
+  # Which backend the chat agent actually calls. Only one active at a time.
+  # "anthropic" sends real conversation content to Anthropic's API — this
+  # project's stated privacy bar rules that out for anything but throwaway
+  # testing with non-real content. Left configurable anyway, disabled by
+  # default via the provider value below.
+  provider: ollama  # ollama | bedrock | anthropic
+
+  ollama:
+    model: qwen2.5:32b
+    host: http://localhost:11434
+    num_ctx: 8192
+
+  bedrock:
+    model_id: anthropic.claude-3-5-sonnet-20241022-v2:0
+    region: us-east-1
+
+  anthropic:
+    model: claude-sonnet-4-5
+    api_key_env: ANTHROPIC_API_KEY

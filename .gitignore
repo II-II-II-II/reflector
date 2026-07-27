@@ -1,0 +1,20 @@
+# Personal journal data — never commit, even to a local-only repo
+data/
+
+# Personal day-to-day working tracker — operational detail, not for public repo
+docs/STATUS.md
+*.zip
+*.db
+*.sqlite
+*.sqlite3
+ian_*/
+ian_*.zip
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# macOS
+.DS_Store

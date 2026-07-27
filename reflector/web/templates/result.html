@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Result — {{ instrument['name'] }}{% endblock %}
+{% block content %}
+  <h1>{{ instrument['name'] }} result</h1>
+  <p>Recorded {{ assessment['administered_at'] }}</p>
+  <p>Total score: <strong>{{ assessment['total_score'] }}</strong></p>
+  <p class="severity">{{ assessment['severity'] }}</p>
+  <a class="back" href="{{ url_for('history', instrument_id=instrument['id']) }}">View trend over time</a><br>
+  <a class="back" href="{{ url_for('index') }}">Back to assessments</a>
+{% endblock %}
