@@ -4,10 +4,20 @@
   <h1>{{ instrument['name'] }} — history</h1>
   {% if rows %}
     <table>
-      <tr><th>Date</th><th>Score</th><th>Severity</th></tr>
-      {% for row in rows %}
-        <tr><td>{{ row['administered_at'] }}</td><td>{{ row['total_score'] }}</td><td>{{ row['severity'] }}</td></tr>
-      {% endfor %}
+      {% if subscores_by_assessment %}
+        <tr><th>Date</th><th>Traits</th></tr>
+        {% for row in rows %}
+          <tr>
+            <td>{{ row['administered_at'] }}</td>
+            <td>{% for s in subscores_by_assessment[row['id']] %}{{ s['subscale'] }}: {{ s['score'] }}{% if not loop.last %} &middot; {% endif %}{% endfor %}</td>
+          </tr>
+        {% endfor %}
+      {% else %}
+        <tr><th>Date</th><th>Score</th><th>Severity</th></tr>
+        {% for row in rows %}
+          <tr><td>{{ row['administered_at'] }}</td><td>{{ row['total_score'] }}</td><td>{{ row['severity'] }}</td></tr>
+        {% endfor %}
+      {% endif %}
     </table>
   {% else %}
     <p>No submissions yet.</p>

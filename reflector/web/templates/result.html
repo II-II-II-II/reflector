@@ -3,8 +3,18 @@
 {% block content %}
   <h1>{{ instrument['name'] }} result</h1>
   <p>Recorded {{ assessment['administered_at'] }}</p>
-  <p>Total score: <strong>{{ assessment['total_score'] }}</strong></p>
-  <p class="severity">{{ assessment['severity'] }}</p>
+  {% if subscores %}
+    <table>
+      <tr><th>Trait</th><th>Score</th></tr>
+      {% for s in subscores %}
+        <tr><td>{{ s['subscale'] }}</td><td>{{ s['score'] }}</td></tr>
+      {% endfor %}
+    </table>
+    <p style="color:var(--text-dim);font-size:0.85rem;">Trait scores, not a single total — this instrument measures five independent dimensions, not one severity axis.</p>
+  {% else %}
+    <p>Total score: <strong>{{ assessment['total_score'] }}</strong></p>
+    <p class="severity">{{ assessment['severity'] }}</p>
+  {% endif %}
   <a class="back" href="{{ url_for('history', instrument_id=instrument['id']) }}">View trend over time</a><br>
   <a class="back" href="{{ url_for('index') }}">Back to assessments</a>
 {% endblock %}

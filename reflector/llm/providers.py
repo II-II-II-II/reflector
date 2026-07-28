@@ -6,11 +6,19 @@ interface so the rest of the app never needs to know which is active.
 
 import os
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
+
+
+@dataclass
+class ChatResult:
+    text: str
+    input_tokens: int | None = None
+    output_tokens: int | None = None
 
 
 class Provider(ABC):
     @abstractmethod
-    def chat(self, messages: list[dict]) -> str:
+    def chat(self, messages: list[dict]) -> ChatResult:
         """messages: [{"role": "system"|"user"|"assistant", "content": str}, ...]"""
 
 
@@ -23,27 +31,32 @@ class OllamaProvider(Provider):
         self.model = model
         self.num_ctx = num_ctx
 
-    def chat(self, messages: list[dict]) -> str:
+    def chat(self, messages: list[dict]) -> ChatResult:
         response = self._client.chat(
             model=self.model,
             messages=messages,
             options={"num_ctx": self.num_ctx},
         )
-        return response.message.content
+        return ChatResult(
+            text=response.message.content,
+            input_tokens=getattr(response, "prompt_eval_count", None),
+            output_tokens=getattr(response, "eval_count", None),
+        )
 
 
 class BedrockProvider(Provider):
-    def __init__(self, model_id: str, region: str):
+    def __init__(self, model_id: str, region: str, profile: str | None = None):
         try:
             import boto3
         except ImportError as e:
             raise RuntimeError(
                 "Bedrock provider selected but boto3 isn't installed. Run: pip install boto3"
             ) from e
-        self._client = boto3.client("bedrock-runtime", region_name=region)
+        session = boto3.Session(profile_name=profile) if profile else boto3.Session()
+        self._client = session.client("bedrock-runtime", region_name=region)
         self.model_id = model_id
 
-    def chat(self, messages: list[dict]) -> str:
+    def chat(self, messages: list[dict]) -> ChatResult:
         system = [m["content"] for m in messages if m["role"] == "system"]
         conversation = [
             {"role": m["role"], "content": [{"text": m["content"]}]}
@@ -54,7 +67,12 @@ class BedrockProvider(Provider):
         if system:
             kwargs["system"] = [{"text": s} for s in system]
         response = self._client.converse(**kwargs)
-        return response["output"]["message"]["content"][0]["text"]
+        usage = response.get("usage", {})
+        return ChatResult(
+            text=response["output"]["message"]["content"][0]["text"],
+            input_tokens=usage.get("inputTokens"),
+            output_tokens=usage.get("outputTokens"),
+        )
 
 
 class AnthropicProvider(Provider):
@@ -74,7 +92,7 @@ class AnthropicProvider(Provider):
         self._client = anthropic.Anthropic(api_key=api_key)
         self.model = model
 
-    def chat(self, messages: list[dict]) -> str:
+    def chat(self, messages: list[dict]) -> ChatResult:
         system = "\n".join(m["content"] for m in messages if m["role"] == "system")
         conversation = [m for m in messages if m["role"] != "system"]
         response = self._client.messages.create(
@@ -83,7 +101,11 @@ class AnthropicProvider(Provider):
             system=system or None,
             messages=conversation,
         )
-        return response.content[0].text
+        return ChatResult(
+            text=response.content[0].text,
+            input_tokens=response.usage.input_tokens,
+            output_tokens=response.usage.output_tokens,
+        )
 
 
 def get_provider(config: dict) -> Provider:
@@ -95,7 +117,7 @@ def get_provider(config: dict) -> Provider:
         return OllamaProvider(model=c["model"], host=c["host"], num_ctx=c["num_ctx"])
     if provider_name == "bedrock":
         c = llm_config["bedrock"]
-        return BedrockProvider(model_id=c["model_id"], region=c["region"])
+        return BedrockProvider(model_id=c["model_id"], region=c["region"], profile=c.get("profile"))
     if provider_name == "anthropic":
         c = llm_config["anthropic"]
         return AnthropicProvider(model=c["model"], api_key_env=c["api_key_env"])

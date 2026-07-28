@@ -1,18 +1,15 @@
 {% extends "base.html" %}
-{% block title %}Reflector — Self-Assessment{% endblock %}
+{% block title %}Self-Assessment{% endblock %}
 {% block content %}
-  <div style="margin-bottom:2rem;">
-    <a href="{{ url_for('chat_page') }}" style="display:block;border:1px solid #2c5cc5;border-radius:8px;padding:0.9rem 1rem;text-decoration:none;color:#2c5cc5;font-weight:600;">Chat →</a>
-  </div>
   <h1>Self-Assessment</h1>
-  <p>These are validated, public-domain screening instruments — for self-reflection and tracking over time, not a diagnosis or a replacement for a licensed clinician.</p>
+  <p style="color:var(--text-dim);">These are validated, public-domain screening instruments — for self-reflection and tracking over time, not a diagnosis or a replacement for a licensed clinician.</p>
   <div class="instrument-list">
     {% for instrument in instruments %}
-      <div style="border:1px solid #ddd;border-radius:8px;padding:0.75rem 1rem;margin-bottom:0.5rem;display:flex;justify-content:space-between;align-items:center;">
-        <a href="{{ url_for('assessment_form', instrument_id=instrument['id']) }}" style="text-decoration:none;color:#222;">
+      <div style="border:1px solid var(--border);border-radius:10px;padding:0.85rem 1rem;margin-bottom:0.6rem;display:flex;justify-content:space-between;align-items:center;background:var(--surface);gap:0.75rem;">
+        <a href="{{ url_for('assessment_form', instrument_id=instrument['id']) }}" style="text-decoration:none;color:var(--text);">
           <strong>{{ instrument['name'] }}</strong> — {{ instrument['full_name'] }}
         </a>
-        <a href="{{ url_for('history', instrument_id=instrument['id']) }}" style="color:#666;font-size:0.9rem;">history</a>
+        <a href="{{ url_for('history', instrument_id=instrument['id']) }}" style="color:var(--text-dim);font-size:0.9rem;white-space:nowrap;">history</a>
       </div>
     {% endfor %}
   </div>

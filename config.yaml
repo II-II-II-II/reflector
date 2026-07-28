@@ -11,7 +11,7 @@ llm:
   # project's stated privacy bar rules that out for anything but throwaway
   # testing with non-real content. Left configurable anyway, disabled by
   # default via the provider value below.
-  provider: ollama  # ollama | bedrock | anthropic
+  provider: bedrock  # ollama | bedrock | anthropic
 
   ollama:
     model: qwen2.5:32b
@@ -19,8 +19,13 @@ llm:
     num_ctx: 8192
 
   bedrock:
-    model_id: anthropic.claude-3-5-sonnet-20241022-v2:0
-    region: us-east-1
+    # deepseek.v3.2 — ON_DEMAND, no inference-profile routing needed.
+    # Claude Sonnet 5 (us.anthropic.claude-sonnet-5) is still pending the
+    # Anthropic account-entitlement gate on the AWS side; swap model_id back
+    # once that clears — no other code changes needed either way.
+    model_id: deepseek.v3.2
+    region: us-east-1  # must match the region where model access is granted
+    profile: reflector  # named AWS CLI profile; omit to use the default credential chain
 
   anthropic:
     model: claude-sonnet-4-5

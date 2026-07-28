@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Chat — one thing first{% endblock %}
+{% block content %}
+  <h1>Before we start chatting</h1>
+  <p>The chat agent works best with some baseline context about you — not just your current symptoms, but stable traits and history that don't change week to week. These are one-time (not re-taken like the trend-tracking screeners):</p>
+  <div class="instrument-list">
+    {% for instrument in missing %}
+      <div style="border:1px solid var(--border);border-radius:10px;padding:0.85rem 1rem;margin-bottom:0.6rem;background:var(--surface);">
+        <a href="{{ url_for('assessment_form', instrument_id=instrument['id']) }}" style="text-decoration:none;color:var(--text);font-weight:600;">
+          {{ instrument['name'] }} — {{ instrument['full_name'] }}
+        </a>
+      </div>
+    {% endfor %}
+  </div>
+  <a class="back" href="{{ url_for('index') }}">Back to assessments</a>
+{% endblock %}

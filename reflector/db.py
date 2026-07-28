@@ -89,6 +89,18 @@ CREATE TABLE IF NOT EXISTS assessment_responses (
 );
 CREATE INDEX IF NOT EXISTS idx_assessment_responses_assessment ON assessment_responses(assessment_id);
 
+-- For instruments scored as independent trait subscales (e.g. Big Five)
+-- rather than one meaningful total. The parent assessments row still gets
+-- a total_score/severity (NOT NULL constraint), but for these instruments
+-- treat those two fields as a non-meaningful placeholder — the real result
+-- lives here, per-subscale.
+CREATE TABLE IF NOT EXISTS assessment_subscores (
+    assessment_id INTEGER NOT NULL REFERENCES assessments(id),
+    subscale TEXT NOT NULL,
+    score INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_assessment_subscores_assessment ON assessment_subscores(assessment_id);
+
 -- Chat history — the single point of contact with the LLM. No RAG/profile
 -- grounding wired in yet (that's Layer 4 proper, once #3/#7 exist); this
 -- is just the conversation log for now.
@@ -97,7 +109,12 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     role TEXT NOT NULL,
     content TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    crisis_flag BOOLEAN NOT NULL DEFAULT 0
+    crisis_flag BOOLEAN NOT NULL DEFAULT 0,
+    input_tokens INTEGER,
+    output_tokens INTEGER,
+    model_id TEXT,
+    code_version TEXT,
+    system_prompt TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_chat_messages_created ON chat_messages(created_at);
 """
@@ -114,6 +131,19 @@ def get_connection() -> sqlite3.Connection:
 def init_db() -> None:
     conn = get_connection()
     conn.executescript(SCHEMA)
+
+    # Migration for chat_messages created before token/cost tracking existed.
+    existing_columns = {row["name"] for row in conn.execute("PRAGMA table_info(chat_messages)")}
+    for column, coltype in [
+        ("input_tokens", "INTEGER"),
+        ("output_tokens", "INTEGER"),
+        ("model_id", "TEXT"),
+        ("code_version", "TEXT"),
+        ("system_prompt", "TEXT"),
+    ]:
+        if column not in existing_columns:
+            conn.execute(f"ALTER TABLE chat_messages ADD COLUMN {column} {coltype}")
+
     conn.commit()
     conn.close()
 
