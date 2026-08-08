@@ -54,11 +54,18 @@ behind one retrieval interface, supporting multiple recall strategies
 salience) rather than plain cosine-similarity RAG. Depends on Layer 1
 clearing evaluation.
 
-### Model-hosting strategy — 🔨 Ongoing decision
-Evaluating local vs. self-hosted-private vs. confidential-computing vs.
-frontier-API tradeoffs per layer, rather than picking one model tier for
-the whole system — see the "Model-hosting tiers" section in
-[`ARCHITECTURE.md`](ARCHITECTURE.md).
+### Model-hosting strategy — ✅ Decided per layer
+Local for Layer 1 extraction (llama3.3:70b, validated against a
+hand-labeled gold set — full corpus run clean, 0 errors) and for
+embeddings (nomic-embed-text). Frontier for Layer 4 chat/reasoning
+(DeepSeek-V3.2 via Bedrock) — direct side-by-side testing against a local
+model (qwen2.5:32b) on the same prompt showed a real, not marginal,
+quality gap on exactly the thing this layer needs most: insightful,
+well-calibrated conversational reasoning, not just mechanical
+correctness. Local remained fully viable for the narrower, more
+mechanical extraction task; it wasn't for this one. See the
+"Model-hosting tiers" section in [`ARCHITECTURE.md`](ARCHITECTURE.md) for
+the full tradeoff table this decision was weighed against.
 
 ---
 

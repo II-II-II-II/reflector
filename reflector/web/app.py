@@ -20,10 +20,12 @@ from flask import Flask, abort, redirect, render_template, request, url_for
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from reflector.config import load_config
+from reflector.context_management import get_context
 from reflector.db import get_connection, init_db
 from reflector.instruments import INSTRUMENTS, score, score_subscales
 from reflector.llm import get_provider
 from reflector.llm.pricing import estimate_cost_usd
+from reflector.memory_search import MEMORY_SEARCH_TOOL_SPEC, memory_search
 from reflector.prompts import CHAT_SYSTEM_PROMPT
 from reflector.safety import contains_crisis_language
 
@@ -287,30 +289,47 @@ def chat_submit():
     crisis_flag = contains_crisis_language(user_message)
     now = datetime.now(timezone.utc).isoformat()
 
+    model_id = current_model_id(load_config())
+    provider = get_llm_provider()
+
     conn = get_connection()
-    history = conn.execute("SELECT role, content FROM chat_messages ORDER BY id ASC").fetchall()
     conn.execute(
         "INSERT INTO chat_messages (role, content, created_at, crisis_flag, code_version) VALUES (?, ?, ?, ?, ?)",
         ("user", user_message, now, crisis_flag, CODE_VERSION),
     )
     conn.commit()
+    conn.close()
+
+    summary_text, recent_history, compaction_input_tokens, compaction_output_tokens = get_context(provider, model_id)
+    if compaction_input_tokens or compaction_output_tokens:
+        logger.info(f"chat context compacted input_tokens={compaction_input_tokens} output_tokens={compaction_output_tokens}")
 
     assessment_ctx = assessment_context()
     messages = [
         {"role": "system", "content": CHAT_SYSTEM_PROMPT},
         {"role": "system", "content": assessment_ctx},
     ]
-    messages.extend({"role": row["role"], "content": row["content"]} for row in history)
+    if summary_text:
+        messages.append({"role": "system", "content": f"Summary of earlier conversation:\n{summary_text}"})
+    messages.extend(recent_history)
     messages.append({"role": "user", "content": user_message})
 
-    model_id = current_model_id(load_config())
     try:
-        result = get_llm_provider().chat(messages)
-        reply, input_tokens, output_tokens = result.text, result.input_tokens, result.output_tokens
+        result = provider.chat(
+            messages,
+            tools=[MEMORY_SEARCH_TOOL_SPEC],
+            tool_executor={"memory_search": memory_search},
+        )
+        reply = result.text
+        input_tokens = (result.input_tokens or 0) + compaction_input_tokens
+        output_tokens = (result.output_tokens or 0) + compaction_output_tokens
     except Exception as e:
         logger.warning(f"chat provider call failed error={type(e).__name__}")
         reply = f"(The configured model backend failed to respond: {type(e).__name__}. Check config.yaml and that the backend is reachable.)"
-        input_tokens = output_tokens = None
+        input_tokens = compaction_input_tokens or None
+        output_tokens = compaction_output_tokens or None
+
+    conn = get_connection()
 
     conn.execute(
         "INSERT INTO chat_messages "
@@ -325,7 +344,8 @@ def chat_submit():
             output_tokens,
             model_id,
             CODE_VERSION,
-            f"{CHAT_SYSTEM_PROMPT}\n\n{assessment_ctx}",
+            f"{CHAT_SYSTEM_PROMPT}\n\n{assessment_ctx}"
+            + (f"\n\nSummary of earlier conversation:\n{summary_text}" if summary_text else ""),
         ),
     )
     conn.commit()

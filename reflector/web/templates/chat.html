@@ -35,6 +35,7 @@
         {% endif %}
       </div>
     {% endfor %}
+    <div id="chat-bottom"></div>
   </div>
 
   <form method="post" onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').textContent='Sending…';">
@@ -43,4 +44,7 @@
       <button type="submit">Send</button>
     </div>
   </form>
+  <script>
+    document.getElementById('chat-bottom').scrollIntoView();
+  </script>
 {% endblock %}

@@ -18,11 +18,30 @@ class ChatResult:
 
 class Provider(ABC):
     @abstractmethod
-    def chat(self, messages: list[dict]) -> ChatResult:
-        """messages: [{"role": "system"|"user"|"assistant", "content": str}, ...]"""
+    def chat(self, messages: list[dict], tools: list[dict] | None = None, tool_executor: dict | None = None) -> ChatResult:
+        """messages: [{"role": "system"|"user"|"assistant", "content": str}, ...]
+        tools/tool_executor: optional Bedrock-style tool specs + {name: callable}
+        for providers that support tool use. Not all providers implement this yet."""
+
+
+def _bedrock_tool_to_ollama(spec: dict) -> dict:
+    """Tool specs are defined once in Bedrock's shape (memory_search.py) —
+    Ollama's function-calling format is structurally different, so convert
+    rather than maintain two copies of the same schema."""
+    tool_spec = spec["toolSpec"]
+    return {
+        "type": "function",
+        "function": {
+            "name": tool_spec["name"],
+            "description": tool_spec["description"],
+            "parameters": tool_spec["inputSchema"]["json"],
+        },
+    }
 
 
 class OllamaProvider(Provider):
+    MAX_TOOL_ITERATIONS = 5
+
     def __init__(self, model: str, host: str, num_ctx: int):
         import ollama
 
@@ -31,16 +50,39 @@ class OllamaProvider(Provider):
         self.model = model
         self.num_ctx = num_ctx
 
-    def chat(self, messages: list[dict]) -> ChatResult:
-        response = self._client.chat(
-            model=self.model,
-            messages=messages,
-            options={"num_ctx": self.num_ctx},
-        )
+    def chat(self, messages: list[dict], tools: list[dict] | None = None, tool_executor: dict | None = None) -> ChatResult:
+        ollama_tools = [_bedrock_tool_to_ollama(t) for t in tools] if tools else None
+        conversation = list(messages)
+        total_input = 0
+        total_output = 0
+
+        for _ in range(self.MAX_TOOL_ITERATIONS):
+            kwargs = {"model": self.model, "messages": conversation, "options": {"num_ctx": self.num_ctx}}
+            if ollama_tools:
+                kwargs["tools"] = ollama_tools
+            response = self._client.chat(**kwargs)
+            total_input += getattr(response, "prompt_eval_count", None) or 0
+            total_output += getattr(response, "eval_count", None) or 0
+
+            if not response.message.tool_calls:
+                return ChatResult(text=response.message.content, input_tokens=total_input, output_tokens=total_output)
+
+            conversation.append(response.message)
+            for tool_call in response.message.tool_calls:
+                fn = (tool_executor or {}).get(tool_call.function.name)
+                try:
+                    result_text = (
+                        fn(**tool_call.function.arguments) if fn
+                        else f"Error: unknown tool '{tool_call.function.name}'"
+                    )
+                except Exception as e:
+                    result_text = f"Error running tool '{tool_call.function.name}': {type(e).__name__}: {e}"
+                conversation.append({"role": "tool", "content": result_text, "tool_name": tool_call.function.name})
+
         return ChatResult(
-            text=response.message.content,
-            input_tokens=getattr(response, "prompt_eval_count", None),
-            output_tokens=getattr(response, "eval_count", None),
+            text="(Reached the tool-call limit for this turn without a final answer — try rephrasing.)",
+            input_tokens=total_input,
+            output_tokens=total_output,
         )
 
 
@@ -56,7 +98,9 @@ class BedrockProvider(Provider):
         self._client = session.client("bedrock-runtime", region_name=region)
         self.model_id = model_id
 
-    def chat(self, messages: list[dict]) -> ChatResult:
+    MAX_TOOL_ITERATIONS = 5  # safety cap against a runaway tool-calling loop
+
+    def chat(self, messages: list[dict], tools: list[dict] | None = None, tool_executor: dict | None = None) -> ChatResult:
         system = [m["content"] for m in messages if m["role"] == "system"]
         conversation = [
             {"role": m["role"], "content": [{"text": m["content"]}]}
@@ -66,12 +110,47 @@ class BedrockProvider(Provider):
         kwargs = {"modelId": self.model_id, "messages": conversation}
         if system:
             kwargs["system"] = [{"text": s} for s in system]
-        response = self._client.converse(**kwargs)
-        usage = response.get("usage", {})
+        if tools:
+            kwargs["toolConfig"] = {"tools": tools}
+
+        total_input = 0
+        total_output = 0
+
+        for _ in range(self.MAX_TOOL_ITERATIONS):
+            response = self._client.converse(**kwargs)
+            usage = response.get("usage", {})
+            total_input += usage.get("inputTokens", 0) or 0
+            total_output += usage.get("outputTokens", 0) or 0
+
+            if response["stopReason"] != "tool_use":
+                text = next(
+                    (b["text"] for b in response["output"]["message"]["content"] if "text" in b), ""
+                )
+                return ChatResult(text=text, input_tokens=total_input, output_tokens=total_output)
+
+            assistant_message = response["output"]["message"]
+            conversation.append(assistant_message)
+
+            tool_result_blocks = []
+            for block in assistant_message["content"]:
+                if "toolUse" not in block:
+                    continue
+                tool_use = block["toolUse"]
+                fn = (tool_executor or {}).get(tool_use["name"])
+                try:
+                    result_text = fn(**tool_use["input"]) if fn else f"Error: unknown tool '{tool_use['name']}'"
+                except Exception as e:
+                    result_text = f"Error running tool '{tool_use['name']}': {type(e).__name__}: {e}"
+                tool_result_blocks.append({
+                    "toolResult": {"toolUseId": tool_use["toolUseId"], "content": [{"text": result_text}]}
+                })
+            conversation.append({"role": "user", "content": tool_result_blocks})
+            kwargs["messages"] = conversation
+
         return ChatResult(
-            text=response["output"]["message"]["content"][0]["text"],
-            input_tokens=usage.get("inputTokens"),
-            output_tokens=usage.get("outputTokens"),
+            text="(Reached the tool-call limit for this turn without a final answer — try rephrasing.)",
+            input_tokens=total_input,
+            output_tokens=total_output,
         )
 
 
@@ -92,7 +171,7 @@ class AnthropicProvider(Provider):
         self._client = anthropic.Anthropic(api_key=api_key)
         self.model = model
 
-    def chat(self, messages: list[dict]) -> ChatResult:
+    def chat(self, messages: list[dict], tools: list[dict] | None = None, tool_executor: dict | None = None) -> ChatResult:
         system = "\n".join(m["content"] for m in messages if m["role"] == "system")
         conversation = [m for m in messages if m["role"] != "system"]
         response = self._client.messages.create(
