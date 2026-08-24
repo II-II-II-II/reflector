@@ -178,6 +178,8 @@ This file documents the design and its rationale — it doesn't track
 day-to-day progress. For what's actually built vs. still open, see
 `docs/STATUS.md`, which is the living tracker.
 
-The `memory_items` unified layer above is a design decision, not yet
-implemented — it's the agreed shape for the retrieval work still ahead in
-Task #3, once Layer 1 extraction (Task #7) clears the gold-standard eval.
+The `memory_items` unified layer above is implemented for the journal and
+assessment adapters (Task #3), with a `memory_search` agentic tool wired
+into the chat loop. The document adapter and the blended
+Ideas/Emotions/Times/Salience scorer described above are still design-only,
+not yet built — see `docs/STATUS.md` Task #6 for current gaps.

@@ -4,9 +4,10 @@ native source tables. Rebuildable — safe to rerun any time extraction
 quality improves; memory_item ids stay stable across reruns (UPSERT keyed
 on source_type+source_id) so embeddings tied to those ids stay valid.
 
-Adapters here: journal (entries+extractions) and assessment (derived by
-rule from scores, no free text to extract). Chat-session adapter is a
-separate, later piece — it needs its own session-level extraction pass,
+Adapters here: journal (entries+extractions), assessment (derived by rule
+from scores, no free text to extract), and document (flat files dropped in
+data/documents/ — standing briefings, resumes, etc). Chat-session adapter is
+a separate, later piece — it needs its own session-level extraction pass,
 not just a reshape of existing data.
 
 Privacy: journal summary_text is real entry content — that's the point,
@@ -17,8 +18,13 @@ Usage:
     python -m reflector.build_memory_items
 """
 
+from datetime import datetime, timezone
+from pathlib import Path
+
 from reflector.db import get_connection
 from reflector.instruments import INSTRUMENTS
+
+DOCUMENTS_DIR = Path(__file__).parent.parent / "data" / "documents"
 
 
 def _upsert_memory_item(conn, source_type, source_id, occurred_at, summary_text,
@@ -95,8 +101,48 @@ def build_assessment_memory_items() -> int:
     return len(rows)
 
 
+def build_document_memory_items() -> int:
+    """Documents dropped in data/documents/ — standing briefings, resumes,
+    job postings, etc. summary_text is the raw file content; source_id is
+    the filename relative to DOCUMENTS_DIR. If a file's content changed
+    since the last build, its stale embedding is deleted so
+    build_embeddings.py's only-embed-what's-missing logic regenerates it,
+    rather than silently keeping an embedding for the old content under the
+    same memory_item_id."""
+    if not DOCUMENTS_DIR.exists():
+        return 0
+    conn = get_connection()
+    paths = sorted(p for p in DOCUMENTS_DIR.rglob("*") if p.is_file())
+
+    for path in paths:
+        source_id = str(path.relative_to(DOCUMENTS_DIR))
+        text = path.read_text().strip()
+        if not text:
+            continue
+        occurred_at = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
+
+        existing = conn.execute(
+            "SELECT id, summary_text FROM memory_items WHERE source_type = 'document' AND source_id = ?",
+            (source_id,),
+        ).fetchone()
+        changed = existing is not None and existing["summary_text"] != text
+
+        memory_item_id = _upsert_memory_item(
+            conn, "document", source_id, occurred_at, text,
+            sentiment_score=None, emotional_intensity=None, notable=False, risk_flag=False,
+        )
+        if changed:
+            conn.execute("DELETE FROM memory_embeddings WHERE memory_item_id = ?", (memory_item_id,))
+
+    conn.commit()
+    conn.close()
+    return len(paths)
+
+
 if __name__ == "__main__":
     n_journal = build_journal_memory_items()
     print(f"Built/updated {n_journal} journal memory_items")
     n_assessment = build_assessment_memory_items()
     print(f"Built/updated {n_assessment} assessment memory_items")
+    n_document = build_document_memory_items()
+    print(f"Built/updated {n_document} document memory_items")

@@ -60,6 +60,13 @@ MEMORY_SEARCH_TOOL_SPEC = {
                     },
                     "theme": {"type": "string", "description": "Filter to this theme, e.g. 'work', 'family', 'health'."},
                     "emotion": {"type": "string", "description": "Filter to this primary emotion."},
+                    "source_type": {
+                        "type": "string",
+                        "enum": ["journal_entry", "assessment", "document"],
+                        "description": "Filter to one source type, e.g. 'document' to search only "
+                        "standing documents the user has shared (resumes, briefings, job postings) "
+                        "rather than journal entries.",
+                    },
                     "limit": {"type": "integer", "description": "Max results, default 5, max 10."},
                 },
                 "required": [],
@@ -76,6 +83,7 @@ def memory_search(
     sort_by: str = "relevance",
     theme: str | None = None,
     emotion: str | None = None,
+    source_type: str | None = None,
     limit: int = 5,
 ) -> str:
     """Returns a formatted text block for the tool result — this is what the
@@ -96,6 +104,9 @@ def memory_search(
     if emotion:
         where.append("mi.id IN (SELECT memory_item_id FROM memory_item_emotions WHERE emotion = ?)")
         params.append(emotion)
+    if source_type:
+        where.append("mi.source_type = ?")
+        params.append(source_type)
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
 
     if sort_by == "relevance" or (sort_by not in {

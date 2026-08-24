@@ -32,6 +32,7 @@ from reflector.safety import contains_crisis_language
 app = Flask(__name__)
 
 _provider = None
+DOCUMENTS_DIR = Path(__file__).parent.parent.parent / "data" / "documents"
 
 
 def _detect_code_version() -> str:
@@ -114,6 +115,24 @@ def session_usage_summary() -> dict:
         "cost_usd": total_cost if cost_known else None,
         "cost_partial": not cost_known and (total_input or total_output),
     }
+
+
+def documents_context() -> str | None:
+    """Standing breadcrumb naming documents the user has dropped in
+    data/documents/ (briefings, resumes, job postings, etc). Lists titles
+    only, not content — the content itself is indexed into memory_items and
+    retrieved via memory_search(source_type='document'), same as journal
+    entries. This is what fixes the original bug: documents are now a real,
+    searchable memory source, so the agent both knows they exist (from this
+    breadcrumb) and can actually retrieve them (via the tool), instead of
+    the old hardcoded-injection split where memory_search always came back
+    empty for something that was never indexed."""
+    if not DOCUMENTS_DIR.exists():
+        return None
+    titles = sorted(p.name for p in DOCUMENTS_DIR.iterdir() if p.is_file())
+    if not titles:
+        return None
+    return "Documents available via memory_search(source_type='document'): " + ", ".join(titles)
 
 
 def assessment_context() -> str:
@@ -305,10 +324,13 @@ def chat_submit():
         logger.info(f"chat context compacted input_tokens={compaction_input_tokens} output_tokens={compaction_output_tokens}")
 
     assessment_ctx = assessment_context()
+    documents_ctx = documents_context()
     messages = [
         {"role": "system", "content": CHAT_SYSTEM_PROMPT},
         {"role": "system", "content": assessment_ctx},
     ]
+    if documents_ctx:
+        messages.append({"role": "system", "content": documents_ctx})
     if summary_text:
         messages.append({"role": "system", "content": f"Summary of earlier conversation:\n{summary_text}"})
     messages.extend(recent_history)
@@ -345,6 +367,7 @@ def chat_submit():
             model_id,
             CODE_VERSION,
             f"{CHAT_SYSTEM_PROMPT}\n\n{assessment_ctx}"
+            + (f"\n\n{documents_ctx}" if documents_ctx else "")
             + (f"\n\nSummary of earlier conversation:\n{summary_text}" if summary_text else ""),
         ),
     )
