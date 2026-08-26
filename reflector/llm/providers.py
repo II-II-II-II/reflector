@@ -6,7 +6,7 @@ interface so the rest of the app never needs to know which is active.
 
 import os
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -14,6 +14,7 @@ class ChatResult:
     text: str
     input_tokens: int | None = None
     output_tokens: int | None = None
+    tool_calls: list[dict] = field(default_factory=list)
 
 
 class Provider(ABC):
@@ -55,6 +56,7 @@ class OllamaProvider(Provider):
         conversation = list(messages)
         total_input = 0
         total_output = 0
+        tool_call_log = []
 
         for _ in range(self.MAX_TOOL_ITERATIONS):
             kwargs = {"model": self.model, "messages": conversation, "options": {"num_ctx": self.num_ctx}}
@@ -65,7 +67,7 @@ class OllamaProvider(Provider):
             total_output += getattr(response, "eval_count", None) or 0
 
             if not response.message.tool_calls:
-                return ChatResult(text=response.message.content, input_tokens=total_input, output_tokens=total_output)
+                return ChatResult(text=response.message.content, input_tokens=total_input, output_tokens=total_output, tool_calls=tool_call_log)
 
             conversation.append(response.message)
             for tool_call in response.message.tool_calls:
@@ -77,12 +79,14 @@ class OllamaProvider(Provider):
                     )
                 except Exception as e:
                     result_text = f"Error running tool '{tool_call.function.name}': {type(e).__name__}: {e}"
+                tool_call_log.append({"tool": tool_call.function.name, "args": tool_call.function.arguments, "result": result_text})
                 conversation.append({"role": "tool", "content": result_text, "tool_name": tool_call.function.name})
 
         return ChatResult(
             text="(Reached the tool-call limit for this turn without a final answer — try rephrasing.)",
             input_tokens=total_input,
             output_tokens=total_output,
+            tool_calls=tool_call_log,
         )
 
 
@@ -115,6 +119,7 @@ class BedrockProvider(Provider):
 
         total_input = 0
         total_output = 0
+        tool_call_log = []
 
         for _ in range(self.MAX_TOOL_ITERATIONS):
             response = self._client.converse(**kwargs)
@@ -126,7 +131,7 @@ class BedrockProvider(Provider):
                 text = next(
                     (b["text"] for b in response["output"]["message"]["content"] if "text" in b), ""
                 )
-                return ChatResult(text=text, input_tokens=total_input, output_tokens=total_output)
+                return ChatResult(text=text, input_tokens=total_input, output_tokens=total_output, tool_calls=tool_call_log)
 
             assistant_message = response["output"]["message"]
             conversation.append(assistant_message)
@@ -141,6 +146,7 @@ class BedrockProvider(Provider):
                     result_text = fn(**tool_use["input"]) if fn else f"Error: unknown tool '{tool_use['name']}'"
                 except Exception as e:
                     result_text = f"Error running tool '{tool_use['name']}': {type(e).__name__}: {e}"
+                tool_call_log.append({"tool": tool_use["name"], "args": tool_use["input"], "result": result_text})
                 tool_result_blocks.append({
                     "toolResult": {"toolUseId": tool_use["toolUseId"], "content": [{"text": result_text}]}
                 })
@@ -151,6 +157,7 @@ class BedrockProvider(Provider):
             text="(Reached the tool-call limit for this turn without a final answer — try rephrasing.)",
             input_tokens=total_input,
             output_tokens=total_output,
+            tool_calls=tool_call_log,
         )
 
 

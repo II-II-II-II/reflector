@@ -9,6 +9,7 @@ hardcoded crisis-resources page — never LLM-generated — regardless of
 total score.
 """
 
+import json
 import logging
 import subprocess
 import sys
@@ -345,18 +346,20 @@ def chat_submit():
         reply = result.text
         input_tokens = (result.input_tokens or 0) + compaction_input_tokens
         output_tokens = (result.output_tokens or 0) + compaction_output_tokens
+        tool_calls_json = json.dumps(result.tool_calls)
     except Exception as e:
         logger.warning(f"chat provider call failed error={type(e).__name__}")
         reply = f"(The configured model backend failed to respond: {type(e).__name__}. Check config.yaml and that the backend is reachable.)"
         input_tokens = compaction_input_tokens or None
         output_tokens = compaction_output_tokens or None
+        tool_calls_json = "[]"
 
     conn = get_connection()
 
     conn.execute(
         "INSERT INTO chat_messages "
-        "(role, content, created_at, crisis_flag, input_tokens, output_tokens, model_id, code_version, system_prompt) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "(role, content, created_at, crisis_flag, input_tokens, output_tokens, model_id, code_version, system_prompt, tool_calls) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             "assistant",
             reply,
@@ -369,6 +372,7 @@ def chat_submit():
             f"{CHAT_SYSTEM_PROMPT}\n\n{assessment_ctx}"
             + (f"\n\n{documents_ctx}" if documents_ctx else "")
             + (f"\n\nSummary of earlier conversation:\n{summary_text}" if summary_text else ""),
+            tool_calls_json,
         ),
     )
     conn.commit()

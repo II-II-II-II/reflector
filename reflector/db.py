@@ -202,6 +202,7 @@ def init_db() -> None:
         ("model_id", "TEXT"),
         ("code_version", "TEXT"),
         ("system_prompt", "TEXT"),
+        ("tool_calls", "TEXT"),
     ]:
         if column not in existing_columns:
             conn.execute(f"ALTER TABLE chat_messages ADD COLUMN {column} {coltype}")
