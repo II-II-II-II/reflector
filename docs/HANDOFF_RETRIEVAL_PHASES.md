@@ -3,39 +3,73 @@
 **Read this whole file before touching anything.** This hands off the
 remainder of an already-approved plan to a different coding agent so the
 project owner can stay token-light with their primary assistant this week.
-Phases 0 (doc sync) and A (document adapter) are DONE, verified, and will be
-committed as the baseline you branch from. Your job is Phases E, B, and C
-only — described in full detail below. Do not re-derive scope from
+Phases 0 (doc sync) and A (document adapter) are DONE, verified, and
+committed to `main` as the baseline this branch was cut from. **Phase E
+(tool-call audit log) is ALSO DONE** — implemented, independently verified
+end-to-end (not just inspected), sitting as uncommitted changes on this
+branch. Your job now is **Phase B, then Phase C, in that order, run back to
+back overnight without stopping in between.** Do not re-derive scope from
 `docs/ARCHITECTURE.md` or invent additional work; everything you need is in
 this file.
 
-## Ground rules
+## Ground rules — unattended overnight run
 
-1. **Work on branch `glimmer/retrieval-phases`.** It's created off the
-   commit that includes Phase 0 + Phase A. Do not push, do not merge to
-   `main`. Another Claude session will review and merge later.
-2. **One phase at a time, in this exact order: E → B → C.** After finishing
-   a phase and its verification step, STOP. Append a completion note to
-   `docs/HANDOFF_RETRIEVAL_PHASES_LOG.md` (create it on your first phase)
-   with: files changed, the exact verification command(s) you ran, and their
-   real output pasted in full — not summarized. Then wait; don't
-   auto-continue into the next phase in the same sitting unless told to.
-3. **If a spec below conflicts with what you actually find in the code, or a
-   verification step fails and you can't determine why after real
-   investigation — STOP and write down exactly what you found instead of
-   guessing past it.** A wrong guess that looks plausible is worse than an
-   honest "stuck here, here's what I saw." This will be read and checked
-   line-by-line before anything merges.
-4. **Match existing conventions exactly** (see below) rather than
+The project owner is setting this running overnight against a deadline and
+will not be available to answer questions or unblock you mid-run. That
+changes how you should handle ambiguity vs. earlier phases:
+
+1. **Work on branch `glimmer/retrieval-phases`.** Do not push, do not merge
+   to `main`. Another Claude session will review and merge later.
+2. **Run Phase B, then Phase C, in one sitting, without stopping for
+   permission between them.** After EACH phase: (a) run its verification
+   step for real and capture the actual output, (b) commit your changes for
+   that phase on this branch only, with a clear commit message (mirror the
+   style of the existing commits — `git log --oneline -5` to see the
+   pattern) — never push, never touch `main`, (c) append a completion
+   section to `docs/HANDOFF_RETRIEVAL_PHASES_LOG.md` (already exists from
+   Phase E — append, don't overwrite) with: files changed, the exact
+   verification command(s) you ran, their real output pasted in full, and
+   anything you weren't sure about. Then continue straight into the next
+   phase.
+3. **Ordinary ambiguity: make the most reasonable, well-reasoned call
+   yourself and keep going — document the call and your reasoning in the
+   log rather than stopping to ask.** Nobody's there to answer overnight, so
+   a documented judgment call beats a stalled run. This applies to things
+   like exact wording of eval queries, minor implementation choices not
+   pinned down below, or reasonable interpretations of an underspecified
+   detail.
+4. **Real, hard blockers are different — if you hit one, stop *that phase
+   only*, write exactly what you found and why you're stuck in the log, and
+   move on to see if the next phase is workable independently** (Phase C
+   depends on Phase B's harness existing, so if Phase B is fully blocked,
+   Phase C likely is too — say so plainly rather than skipping ahead
+   silently). Do not let a stall in one phase produce hours of guessing —
+   a clear "stopped here, here's why" is far more useful by morning than a
+   confident wrong turn compounded across two phases.
+5. **The actual retrieval-relevance labeling in Phase B is explicitly NOT
+   your job** — it's real human judgment work the project owner does
+   themselves later. Build the harness scripts, verify them against a
+   temporary fake gold file (delete it after), and move on. Do not fabricate
+   real-looking gold labels to unblock yourself; that would silently corrupt
+   the eval set. Phase C's verification against real data will simply
+   happen later, after the project owner labels — your job is to leave
+   Phase C's code correct and ready for that, using the manual sanity-check
+   verification path described in Phase C below.
+6. **Match existing conventions exactly** (see below) rather than
    introducing your own style, abstractions, or error handling. This is a
    small, deliberately unabstracted codebase — three similar lines beat a
    premature helper.
-5. **Privacy discipline is non-negotiable**: no script may ever print raw
+7. **Privacy discipline is non-negotiable**: no script may ever print raw
    journal/assessment/document content to stdout or a log file — only
    counts, ids, and aggregate stats. Every existing script in this repo
    follows this; grep any of them (`extract.py`, `build_memory_items.py`,
    `memory_search.py`) if unsure what "aggregate only" looks like in
    practice.
+8. **When both phases are done (or you've gone as far as you genuinely
+   can), write a final "Overnight run summary" section at the top of
+   `docs/HANDOFF_RETRIEVAL_PHASES_LOG.md`** — one paragraph: what got done,
+   what didn't, and the single most important thing to check first in
+   review. Then stop.
 
 ## Environment
 
@@ -121,7 +155,13 @@ this file.
 
 ---
 
-## Phase E — tool-call audit log
+## Phase E — tool-call audit log — ✅ ALREADY DONE, skip this section
+
+Kept below for reference only (Phase B/C's spec refers back to
+`ChatResult.tool_calls`). Do not re-implement or modify this — it's done,
+independently verified (including a real end-to-end Bedrock call and a real
+Flask `/chat` request confirming the `tool_calls` column persists
+correctly), and committed. Start at **Phase B** below.
 
 **Problem:** `chat_messages.system_prompt` captures the standing context per
 turn, but the actual `memory_search` calls made *during* a turn (query args,
@@ -366,8 +406,7 @@ a bug, not a taste adjustment).
 
 ## Reporting back
 
-After each phase: append to `docs/HANDOFF_RETRIEVAL_PHASES_LOG.md` (create
-on first use) — files changed, exact verification commands run, their real
-output pasted in full, and anything uncertain or skipped. Be concrete, not
-narrative — this is what gets checked against the spec above before merge,
-not read as a status update.
+See ground rule #2 and #8 — log per phase, commit per phase (branch only),
+and write the overnight summary at the top of the log when you stop. Be
+concrete, not narrative — this is what gets checked against the spec above
+before merge, not read as a status update.
