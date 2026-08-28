@@ -12,9 +12,13 @@ to print that content to stdout/logs, same convention as the rest of the
 pipeline.
 """
 
+import math
+from datetime import datetime
+
 import ollama
 import sqlite_vec
 
+from reflector.config import load_config
 from reflector.db import get_connection
 
 SUMMARY_TRUNCATE_CHARS = 800
@@ -131,8 +135,79 @@ def memory_search(
             f"SELECT mi.* FROM memory_items mi WHERE mi.id IN ({placeholders}) {('AND ' + ' AND '.join(where)) if where else ''}",
             candidate_ids + params,
         ).fetchall()
-        order = {c["memory_item_id"]: i for i, c in enumerate(candidates)}
-        rows = sorted(rows, key=lambda r: order[r["id"]])[:limit]
+        # Blended relevance score (Phase C): semantic + recency + salience + emotion
+        retrieval_cfg = load_config().get("retrieval", {})
+        weights = retrieval_cfg.get("weights", {})
+        w_sem = weights.get("semantic", 0.5)
+        w_rec = weights.get("recency", 0.2)
+        w_sal = weights.get("salience", 0.2)
+        w_emo = weights.get("emotion", 0.1)
+        recency_half_life = retrieval_cfg.get("recency_half_life_days", 180)
+        anniversary_window = retrieval_cfg.get("anniversary_window_days", 3)
+        anniversary_bonus = retrieval_cfg.get("anniversary_bonus", 0.15)
+        notable_bonus = retrieval_cfg.get("notable_bonus", 0.15)
+        risk_flag_bonus = retrieval_cfg.get("risk_flag_bonus", 0.15)
+
+        distances = [c["distance"] for c in candidates]
+        min_dist = min(distances)
+        max_dist = max(distances)
+
+        semantic_sims = {}
+        for c in candidates:
+            mid = c["memory_item_id"]
+            if max_dist > min_dist:
+                norm = (c["distance"] - min_dist) / (max_dist - min_dist)
+                semantic_sims[mid] = 1.0 - norm
+            else:
+                semantic_sims[mid] = 0.5
+
+        now = datetime.now()
+
+        def _relevance_score(row):
+            # semantic similarity (already normalized to [0, 1])
+            sim = semantic_sims.get(row["id"], 0.5)
+
+            # recency decay
+            try:
+                occurred_date = datetime.strptime(row["occurred_at"][:10], "%Y-%m-%d")
+                days_ago = (now - occurred_date).days
+            except (ValueError, OverflowError):
+                days_ago = 365
+            recency_decay = math.exp(-days_ago / recency_half_life)
+
+            # salience boost
+            score = sim * w_sem + recency_decay * w_rec
+            if row["notable"]:
+                score += notable_bonus * w_sal
+            if row["risk_flag"]:
+                score += risk_flag_bonus * w_sal
+
+            # anniversary bonus
+            try:
+                occurred_date = datetime.strptime(row["occurred_at"][:10], "%Y-%m-%d")
+                for year_offset in range(1, 10):
+                    try:
+                        prior_date = occurred_date.replace(year=now.year - year_offset)
+                    except ValueError:
+                        continue
+                    if abs((prior_date.date() - now.date()).days) <= anniversary_window:
+                        score += anniversary_bonus * w_sal
+                        break
+            except (ValueError, OverflowError):
+                pass
+
+            # emotion match — soft signal within the blend
+            if emotion:
+                emotion_rows = conn.execute(
+                    "SELECT emotion FROM memory_item_emotions WHERE memory_item_id = ?",
+                    (row["id"],),
+                ).fetchall()
+                if any(e["emotion"] == emotion for e in emotion_rows):
+                    score += 0.5 * w_emo
+
+            return score
+
+        rows = sorted(rows, key=lambda r: _relevance_score(r), reverse=True)[:limit]
     else:
         order_sql = {
             "emotional_intensity": "mi.emotional_intensity DESC",
