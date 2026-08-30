@@ -80,6 +80,107 @@ MEMORY_SEARCH_TOOL_SPEC = {
 }
 
 
+def _relevance_rows(conn, semantic_query, where, params, emotion, limit):
+    """Runs the actual blended relevance ranking (Phase C: semantic +
+    recency + salience + emotion) and returns the ranked memory_items rows.
+    Factored out of memory_search() so score_retrieval.py can score this
+    real ranking logic directly instead of reimplementing a subset of it —
+    otherwise the eval harness can never detect whether a scoring change
+    actually helped.
+
+    `where`/`params` here are hard filters only (date/theme/source_type) —
+    emotion is deliberately NOT included: within relevance ranking it's a
+    soft blended signal, not an exclusion filter. Callers that want emotion
+    as a hard filter (the other six sort_by axes) apply it separately."""
+    vector = ollama.embed(model="nomic-embed-text", input=semantic_query).embeddings[0]
+    # Over-fetch by KNN, then apply structured filters in Python — simpler
+    # and more portable than combining vec0 MATCH with arbitrary SQL joins.
+    candidates = conn.execute(
+        "SELECT memory_item_id, distance FROM memory_embeddings WHERE embedding MATCH ? AND k = 100 ORDER BY distance",
+        (sqlite_vec.serialize_float32(vector),),
+    ).fetchall()
+    candidate_ids = [c["memory_item_id"] for c in candidates]
+    if not candidate_ids:
+        return []
+    placeholders = ",".join("?" * len(candidate_ids))
+    rows = conn.execute(
+        f"SELECT mi.* FROM memory_items mi WHERE mi.id IN ({placeholders}) {('AND ' + ' AND '.join(where)) if where else ''}",
+        candidate_ids + params,
+    ).fetchall()
+    if not rows:
+        return []
+
+    retrieval_cfg = load_config().get("retrieval", {})
+    weights = retrieval_cfg.get("weights", {})
+    w_sem = weights.get("semantic", 0.5)
+    w_rec = weights.get("recency", 0.2)
+    w_sal = weights.get("salience", 0.2)
+    w_emo = weights.get("emotion", 0.1)
+    recency_half_life = retrieval_cfg.get("recency_half_life_days", 180)
+    anniversary_window = retrieval_cfg.get("anniversary_window_days", 3)
+    anniversary_bonus = retrieval_cfg.get("anniversary_bonus", 0.15)
+    notable_bonus = retrieval_cfg.get("notable_bonus", 0.15)
+    risk_flag_bonus = retrieval_cfg.get("risk_flag_bonus", 0.15)
+
+    distances = [c["distance"] for c in candidates]
+    min_dist = min(distances)
+    max_dist = max(distances)
+
+    semantic_sims = {}
+    for c in candidates:
+        mid = c["memory_item_id"]
+        if max_dist > min_dist:
+            norm = (c["distance"] - min_dist) / (max_dist - min_dist)
+            semantic_sims[mid] = 1.0 - norm
+        else:
+            semantic_sims[mid] = 0.5
+
+    now = datetime.now()
+
+    def _relevance_score(row):
+        # semantic similarity (already normalized to [0, 1])
+        sim = semantic_sims.get(row["id"], 0.5)
+
+        occurred_date = None
+        try:
+            occurred_date = datetime.strptime(row["occurred_at"][:10], "%Y-%m-%d")
+            days_ago = (now - occurred_date).days
+        except (ValueError, OverflowError):
+            days_ago = 365
+        recency_decay = math.exp(-days_ago / recency_half_life)
+
+        score = sim * w_sem + recency_decay * w_rec
+        if row["notable"]:
+            score += notable_bonus * w_sal
+        if row["risk_flag"]:
+            score += risk_flag_bonus * w_sal
+
+        # Anniversary bonus: does this item's month/day, mapped onto THIS
+        # year, fall within the window of today? (Not "N years ago" per se
+        # — a single same-calendar-day check, independent of how many years
+        # have actually passed.)
+        if occurred_date is not None:
+            try:
+                this_year_date = occurred_date.replace(year=now.year)
+            except ValueError:
+                this_year_date = occurred_date.replace(year=now.year, day=28)  # Feb 29 fallback
+            if abs((this_year_date.date() - now.date()).days) <= anniversary_window:
+                score += anniversary_bonus * w_sal
+
+        # emotion match — soft signal within the blend, not a hard filter
+        if emotion:
+            emotion_rows = conn.execute(
+                "SELECT emotion FROM memory_item_emotions WHERE memory_item_id = ?",
+                (row["id"],),
+            ).fetchall()
+            if any(e["emotion"] == emotion for e in emotion_rows):
+                score += 0.5 * w_emo
+
+        return score
+
+    return sorted(rows, key=_relevance_score, reverse=True)[:limit]
+
+
 def memory_search(
     semantic_query: str | None = None,
     date_start: str | None = None,
@@ -95,6 +196,10 @@ def memory_search(
     limit = max(1, min(int(limit or 5), 10))
     conn = get_connection()
 
+    # Hard filters shared by both branches. emotion is intentionally NOT
+    # included here — for sort_by="relevance" it's a soft blended signal
+    # (see _relevance_rows); for the other six sort_by axes it's applied as
+    # a hard filter below, same as before.
     where, params = [], []
     if date_start:
         where.append("mi.occurred_at >= ?")
@@ -105,13 +210,9 @@ def memory_search(
     if theme:
         where.append("mi.id IN (SELECT memory_item_id FROM memory_item_themes WHERE theme = ?)")
         params.append(theme)
-    if emotion:
-        where.append("mi.id IN (SELECT memory_item_id FROM memory_item_emotions WHERE emotion = ?)")
-        params.append(emotion)
     if source_type:
         where.append("mi.source_type = ?")
         params.append(source_type)
-    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
 
     if sort_by == "relevance" or (sort_by not in {
         "emotional_intensity", "sentiment_low", "sentiment_high", "recency", "notable", "risk_flag",
@@ -119,96 +220,13 @@ def memory_search(
         if not semantic_query:
             conn.close()
             return "Error: semantic_query is required when sort_by is 'relevance' (the default)."
-        vector = ollama.embed(model="nomic-embed-text", input=semantic_query).embeddings[0]
-        # Over-fetch by KNN, then apply structured filters in Python — simpler
-        # and more portable than combining vec0 MATCH with arbitrary SQL joins.
-        candidates = conn.execute(
-            "SELECT memory_item_id, distance FROM memory_embeddings WHERE embedding MATCH ? AND k = 100 ORDER BY distance",
-            (sqlite_vec.serialize_float32(vector),),
-        ).fetchall()
-        candidate_ids = [c["memory_item_id"] for c in candidates]
-        if not candidate_ids:
-            conn.close()
-            return "No results."
-        placeholders = ",".join("?" * len(candidate_ids))
-        rows = conn.execute(
-            f"SELECT mi.* FROM memory_items mi WHERE mi.id IN ({placeholders}) {('AND ' + ' AND '.join(where)) if where else ''}",
-            candidate_ids + params,
-        ).fetchall()
-        # Blended relevance score (Phase C): semantic + recency + salience + emotion
-        retrieval_cfg = load_config().get("retrieval", {})
-        weights = retrieval_cfg.get("weights", {})
-        w_sem = weights.get("semantic", 0.5)
-        w_rec = weights.get("recency", 0.2)
-        w_sal = weights.get("salience", 0.2)
-        w_emo = weights.get("emotion", 0.1)
-        recency_half_life = retrieval_cfg.get("recency_half_life_days", 180)
-        anniversary_window = retrieval_cfg.get("anniversary_window_days", 3)
-        anniversary_bonus = retrieval_cfg.get("anniversary_bonus", 0.15)
-        notable_bonus = retrieval_cfg.get("notable_bonus", 0.15)
-        risk_flag_bonus = retrieval_cfg.get("risk_flag_bonus", 0.15)
-
-        distances = [c["distance"] for c in candidates]
-        min_dist = min(distances)
-        max_dist = max(distances)
-
-        semantic_sims = {}
-        for c in candidates:
-            mid = c["memory_item_id"]
-            if max_dist > min_dist:
-                norm = (c["distance"] - min_dist) / (max_dist - min_dist)
-                semantic_sims[mid] = 1.0 - norm
-            else:
-                semantic_sims[mid] = 0.5
-
-        now = datetime.now()
-
-        def _relevance_score(row):
-            # semantic similarity (already normalized to [0, 1])
-            sim = semantic_sims.get(row["id"], 0.5)
-
-            # recency decay
-            try:
-                occurred_date = datetime.strptime(row["occurred_at"][:10], "%Y-%m-%d")
-                days_ago = (now - occurred_date).days
-            except (ValueError, OverflowError):
-                days_ago = 365
-            recency_decay = math.exp(-days_ago / recency_half_life)
-
-            # salience boost
-            score = sim * w_sem + recency_decay * w_rec
-            if row["notable"]:
-                score += notable_bonus * w_sal
-            if row["risk_flag"]:
-                score += risk_flag_bonus * w_sal
-
-            # anniversary bonus
-            try:
-                occurred_date = datetime.strptime(row["occurred_at"][:10], "%Y-%m-%d")
-                for year_offset in range(1, 10):
-                    try:
-                        prior_date = occurred_date.replace(year=now.year - year_offset)
-                    except ValueError:
-                        continue
-                    if abs((prior_date.date() - now.date()).days) <= anniversary_window:
-                        score += anniversary_bonus * w_sal
-                        break
-            except (ValueError, OverflowError):
-                pass
-
-            # emotion match — soft signal within the blend
-            if emotion:
-                emotion_rows = conn.execute(
-                    "SELECT emotion FROM memory_item_emotions WHERE memory_item_id = ?",
-                    (row["id"],),
-                ).fetchall()
-                if any(e["emotion"] == emotion for e in emotion_rows):
-                    score += 0.5 * w_emo
-
-            return score
-
-        rows = sorted(rows, key=lambda r: _relevance_score(r), reverse=True)[:limit]
+        rows = _relevance_rows(conn, semantic_query, where, params, emotion, limit)
     else:
+        struct_where, struct_params = list(where), list(params)
+        if emotion:
+            struct_where.append("mi.id IN (SELECT memory_item_id FROM memory_item_emotions WHERE emotion = ?)")
+            struct_params.append(emotion)
+        where_sql = ("WHERE " + " AND ".join(struct_where)) if struct_where else ""
         order_sql = {
             "emotional_intensity": "mi.emotional_intensity DESC",
             "sentiment_low": "mi.sentiment_score ASC",
@@ -219,7 +237,7 @@ def memory_search(
         }[sort_by]
         rows = conn.execute(
             f"SELECT mi.* FROM memory_items mi {where_sql} ORDER BY {order_sql} LIMIT ?",
-            params + [limit],
+            struct_params + [limit],
         ).fetchall()
 
     if not rows:

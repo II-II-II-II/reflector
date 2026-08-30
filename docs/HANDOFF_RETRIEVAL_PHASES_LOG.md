@@ -1,5 +1,75 @@
 # Retrieval Phases Log
 
+## Review pass (Claude) — Phase B + C
+
+**Date:** 2026-08-30
+
+Reviewed and independently verified the overnight Phase B/C work before
+publishing. Found and fixed four real issues:
+
+1. **`config.yaml` didn't parse at all** (`ScannerError`) — the new
+   `retrieval:` block got inserted mid-way through `llm.ollama:`, splitting
+   it from its own `model`/`host`/`num_ctx` keys. This meant `load_config()`
+   raised on every call, so the entire app (chat, extraction, everything)
+   was broken on this branch. Not caught because Phase C's verification
+   only checked that the module *imports* (`from reflector import
+   memory_search`), which never triggers `load_config()` — that only
+   happens lazily inside `memory_search()` at call time. Fixed by moving
+   `retrieval:` to its own top-level section; verified `load_config()` now
+   parses both `llm.ollama` and `retrieval` correctly.
+2. **Emotion "soft match" was dead code.** The spec asked for `emotion` to
+   become a soft blended signal for `sort_by="relevance"` instead of a hard
+   filter — the scoring code for this was added, but the original hard
+   filter (`where.append("mi.id IN (SELECT ... WHERE emotion = ?)")`) was
+   never removed, so it still excluded non-matching items before the soft
+   bonus ever ran. Every row that reached the soft-match check already had
+   that emotion, making the bonus a no-op. Fixed by splitting the emotion
+   filter out of the shared `where` construction — hard filter only for the
+   six structured `sort_by` axes now, soft signal only for `relevance`.
+3. **Anniversary bonus never fires in practice.** Verified empirically: a
+   real 2-year anniversary (event on 2024-03-15, "today" 2026-03-16) scored
+   731 days away from the ±3-day window, because the code compared
+   `occurred_date.replace(year=now.year - year_offset)` against `now.date()`
+   directly — comparing across different years without normalizing the year
+   gap, rather than checking whether the event's month/day maps onto *this*
+   year near today. Fixed to a single check:
+   `occurred_date.replace(year=now.year)` vs. `now.date()`, within window.
+4. **`score_retrieval.py` never actually tested the system it was scoring.**
+   `_run_query_internal` reimplemented a stripped-down raw-KNN lookup
+   instead of calling `memory_search()`'s real relevance ranking — so it
+   could never detect whether Phase C's blended scorer changed anything;
+   every run silently scored the pre-Phase-C behavior regardless of what
+   `memory_search()` actually does. Fixed by extracting the ranking logic
+   into `_relevance_rows()` (a module-level function in `memory_search.py`)
+   that both `memory_search()` and `score_retrieval.py` call directly —
+   same code path, not a parallel reimplementation.
+
+Also removed `docs/CONTEXT_BOOTSTRAP.md` from git tracking (kept the file on
+disk) — it was committed as part of the Phase B/C commit without being
+asked for, and it's now stale (still says "no combined scorer yet"). This
+file was deliberately left untouched and out of scope during Phase 0 and
+Phase A for the same reason.
+
+**Re-verified all four fixes with real calls, not just imports:**
+- `load_config()` returns correct `llm.ollama` and `retrieval` dicts.
+- `memory_search(sort_by="relevance", ...)` and `memory_search(sort_by="recency", ...)`
+  both return real, correctly formatted results post-refactor.
+- Anniversary math: the same 2024-03-15 / 2026-03-16 case now correctly
+  computes a 1-day gap (within the 3-day window).
+- `score_retrieval.py` run against a real (single-item, throwaway) gold
+  file pointing at an actual top-ranked `memory_item_id` from
+  `_relevance_rows` — got MRR@10 = 1.0, precision@3 = 0.333, confirming the
+  harness now measures the real ranking instead of always returning 0.0
+  against fabricated IDs (as the original overnight run's test did, for a
+  different, expected reason — its fake IDs didn't exist in the DB at all).
+
+**Not fixed, left as-is (working as intended or out of scope for this
+pass):** only 1 of the 2 recommended document-axis eval queries was
+authored (`q12`); default retrieval weights are untuned placeholders per
+spec, pending real gold labels from `label_retrieval_gold.py`.
+
+---
+
 ## Phase E — tool-call audit log
 
 **Date:** 2026-08-24

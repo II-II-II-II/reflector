@@ -49,21 +49,18 @@ def load_queries(path):
     return queries
 
 
-def _run_query_internal(query_text: str, config=None):
-    # For scoring, we need to run the actual memory_search but capture ids.
-    # We'll reimplement minimal retrieval using same logic as memory_search
-    # but return ids directly.
-    import ollama
-    import sqlite_vec
+def _run_query_internal(query_text: str, limit: int = 10):
+    """Runs the SAME ranking function memory_search() itself calls
+    (_relevance_rows — semantic + recency + salience + emotion blend, Phase
+    C), so this measures what the agent would actually retrieve, not a
+    separate reimplementation. limit=10 matches memory_search()'s own max
+    limit, covering every k this script tests (3/5/10) with one real call."""
     from reflector.db import get_connection
+    from reflector.memory_search import _relevance_rows
 
     conn = get_connection()
-    vector = ollama.embed(model="nomic-embed-text", input=query_text).embeddings[0]
-    candidates = conn.execute(
-        "SELECT memory_item_id, distance FROM memory_embeddings WHERE embedding MATCH ? AND k = 100 ORDER BY distance",
-        (sqlite_vec.serialize_float32(vector),),
-    ).fetchall()
-    ids = [c["memory_item_id"] for c in candidates]
+    rows = _relevance_rows(conn, query_text, where=[], params=[], emotion=None, limit=limit)
+    ids = [r["id"] for r in rows]
     conn.close()
     return ids
 

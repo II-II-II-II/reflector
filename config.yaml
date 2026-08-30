@@ -18,18 +18,6 @@ llm:
   # insight). Kept configured for reflector.extract (Layer 1) and available
   # to swap back into chat for comparison if a better local model shows up.
   ollama:
-
-retrieval:
-  weights:
-    semantic: 0.5
-    recency: 0.2
-    salience: 0.2
-    emotion: 0.1
-  recency_half_life_days: 180
-  anniversary_window_days: 3
-  anniversary_bonus: 0.15
-  notable_bonus: 0.15
-  risk_flag_bonus: 0.15
     model: qwen2.5:32b
     host: http://localhost:11434
     num_ctx: 32768  # was 8192, sized for short single-entry extraction — a tool-using chat turn alone can be several thousand tokens
@@ -46,3 +34,19 @@ retrieval:
   anthropic:
     model: claude-sonnet-4-5
     api_key_env: ANTHROPIC_API_KEY
+
+# Phase C — blended memory_search relevance scoring (semantic + recency +
+# salience + emotion). Only applies to sort_by="relevance"; the six explicit
+# single-axis sorts are untouched. Not yet tuned against real gold labels —
+# see data/eval/retrieval_gold.jsonl / reflector/score_retrieval.py.
+retrieval:
+  weights:
+    semantic: 0.5
+    recency: 0.2
+    salience: 0.2
+    emotion: 0.1
+  recency_half_life_days: 180
+  anniversary_window_days: 3
+  anniversary_bonus: 0.15
+  notable_bonus: 0.15
+  risk_flag_bonus: 0.15
