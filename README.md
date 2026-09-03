@@ -53,11 +53,61 @@ never leaves your machine by default.** Concretely:
   the vector store, the local database — is ever meant to leave your
   machine or be published; only the system that operates on it is open.
 
+### How retrieval stays private when the chat model is remote
+
+The chat layer runs on a remote model (currently AWS Bedrock), but the
+vector search, the embeddings, and the database itself never leave the
+machine. Bedrock can't query anything on its own — it can only *ask* the
+local app to run a search, and only the resulting text excerpts (never the
+database, never the index) cross the network.
+
+```mermaid
+flowchart LR
+    subgraph LOCAL["Local machine — never leaves"]
+        DB[("reflector.db<br/>SQLite + sqlite-vec<br/>journal text + embeddings")]
+        OLLAMA["Local Ollama<br/>nomic-embed-text"]
+        MS["memory_search()<br/>KNN + blended scoring"]
+        APP["Flask app<br/>chat_submit()"]
+    end
+    subgraph REMOTE["AWS Bedrock — remote"]
+        LLM["DeepSeek-V3.2<br/>reasoning only, no data access"]
+    end
+
+    APP -- "system prompt, history,<br/>tool SPEC (schema only, no data)" --> LLM
+    LLM -- "tool_use request:<br/>memory_search(args)" --> APP
+    APP --> MS
+    MS --> OLLAMA
+    MS --> DB
+    MS -- "top-k text excerpts only<br/>(truncated, max 10 results)" --> APP
+    APP -- "tool result = those excerpts" --> LLM
+    LLM -- "final reply" --> APP
+```
+
+```mermaid
+sequenceDiagram
+    participant U as You
+    participant App as Local app (chat_submit)
+    participant Bedrock as AWS Bedrock (DeepSeek-V3.2)
+    participant MS as Local memory_search()
+    participant DB as Local SQLite + sqlite-vec
+
+    U->>App: "What have I written about feeling anxious?"
+    App->>Bedrock: message + tool SPEC (schema only, no data)
+    Bedrock-->>App: tool_use: memory_search(semantic_query="anxious", sort_by="relevance")
+    App->>MS: run locally
+    MS->>DB: embed query (local Ollama) + KNN search
+    DB-->>MS: matching memory_items (local only)
+    MS-->>App: formatted excerpts (top 5, truncated to 800 chars each)
+    App->>Bedrock: tool result = those excerpts, nothing else
+    Bedrock-->>App: final natural-language reply
+    App-->>U: reply shown in chat
+    Note over App,DB: tool_calls column logs exactly what was<br/>sent to Bedrock, for after-the-fact audit
+```
+
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design,
 including the model-hosting tiers and the tradeoffs between them, and
-[`docs/RETRIEVAL_PRIVACY.md`](docs/RETRIEVAL_PRIVACY.md) for a diagrammed,
-step-by-step walkthrough of exactly what does and doesn't cross the network
-when the chat agent retrieves something from your journal.
+[`docs/RETRIEVAL_PRIVACY.md`](docs/RETRIEVAL_PRIVACY.md) for the full
+step-by-step walkthrough and how to audit any chat turn yourself.
 
 ## The long-term goal
 
