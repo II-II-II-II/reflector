@@ -54,7 +54,10 @@ never leaves your machine by default.** Concretely:
   machine or be published; only the system that operates on it is open.
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design,
-including the model-hosting tiers and the tradeoffs between them.
+including the model-hosting tiers and the tradeoffs between them, and
+[`docs/RETRIEVAL_PRIVACY.md`](docs/RETRIEVAL_PRIVACY.md) for a diagrammed,
+step-by-step walkthrough of exactly what does and doesn't cross the network
+when the chat agent retrieves something from your journal.
 
 ## The long-term goal
 

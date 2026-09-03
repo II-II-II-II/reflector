@@ -58,7 +58,9 @@ a topic comes up), and structured self-assessment scores tracked over time
 (PHQ-9/GAD-7/etc., trended, not one-shot). Together these are the "full
 psychological assessment" — it's a system, not a single document. How that
 retrieval actually works across all three data sources is its own layer,
-covered next.
+covered next. For exactly how this stays private when the chat model itself
+runs on remote infrastructure (Bedrock), see
+[`docs/RETRIEVAL_PRIVACY.md`](RETRIEVAL_PRIVACY.md).
 
 ```mermaid
 flowchart TD
@@ -178,8 +180,13 @@ This file documents the design and its rationale — it doesn't track
 day-to-day progress. For what's actually built vs. still open, see
 `docs/STATUS.md`, which is the living tracker.
 
-The `memory_items` unified layer above is implemented for the journal and
-assessment adapters (Task #3), with a `memory_search` agentic tool wired
-into the chat loop. The document adapter and the blended
-Ideas/Emotions/Times/Salience scorer described above are still design-only,
-not yet built — see `docs/STATUS.md` Task #6 for current gaps.
+The `memory_items` unified layer above is implemented for the journal,
+assessment, and document adapters, with a `memory_search` agentic tool
+wired into the chat loop, and the blended Ideas/Emotions/Times/Salience
+scorer described above is live (`reflector/memory_search.py`, tunable via
+`config.yaml`'s `retrieval:` section). A retrieval-quality eval harness
+(`build_retrieval_pool.py` → `label_retrieval_gold.py` → `score_retrieval.py`,
+mirroring the extraction eval trio) exists to measure it. See
+`docs/RETRIEVAL_PRIVACY.md` for exactly how a chat turn using this tool
+keeps journal data off Bedrock's side of the boundary, and `docs/STATUS.md`
+for current gaps (chat-session adapter still deferred).
