@@ -5,6 +5,10 @@ For each query in data/eval/retrieval_queries.jsonl, collects:
 - top-15 semantic KNN results (KNN over memory_embeddings, no sorting/limit bias)
 - top-5 from each of the 6 structured sort_by axes
 
+Assessment items (source_type='assessment') are excluded from the pool —
+their summary_text is rule-derived template text ("GAD-7 taken, total 8,
+Mild"), not real content worth judging retrieval relevance against.
+
 Writes data/eval/retrieval_candidates.jsonl with one line per (query_id, memory_item_id) pair,
 with metadata: query_id, memory_item_id, source_type, occurred_at, text_preview (first ~150 chars).
 
@@ -33,14 +37,26 @@ def _semantic_knn_pool(conn, query: str, k: int = 15):
         "SELECT memory_item_id, distance FROM memory_embeddings WHERE embedding MATCH ? AND k = ? ORDER BY distance",
         (sqlite_vec.serialize_float32(vector), k * 10),  # over-fetch then dedupe
     ).fetchall()
-    # Return first k unique ids
+    candidate_ids = [r["memory_item_id"] for r in rows]
+    if not candidate_ids:
+        return []
+    # Assessment rows (e.g. "GAD-7 taken, total 8, Mild") are rule-derived
+    # template text, not real content — not meaningful to judge retrieval
+    # relevance against, so excluded from the eval pool entirely.
+    placeholders = ",".join("?" * len(candidate_ids))
+    non_assessment = {
+        r["id"] for r in conn.execute(
+            f"SELECT id FROM memory_items WHERE id IN ({placeholders}) AND source_type != 'assessment'",
+            candidate_ids,
+        ).fetchall()
+    }
     seen = set()
     ids = []
-    for r in rows:
-        mid = r["memory_item_id"]
-        if mid not in seen:
-            seen.add(mid)
-            ids.append(mid)
+    for mid in candidate_ids:
+        if mid not in non_assessment or mid in seen:
+            continue
+        seen.add(mid)
+        ids.append(mid)
         if len(ids) >= k:
             break
     return ids
@@ -60,7 +76,7 @@ def _structured_pool(conn, sort_by: str, limit: int = 5):
     if not order_sql:
         return []
     rows = conn.execute(
-        f"SELECT mi.id FROM memory_items mi ORDER BY {order_sql} LIMIT ?",
+        f"SELECT mi.id FROM memory_items mi WHERE mi.source_type != 'assessment' ORDER BY {order_sql} LIMIT ?",
         (limit,),
     ).fetchall()
     return [r["id"] for r in rows]
